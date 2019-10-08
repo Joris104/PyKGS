@@ -51,7 +51,7 @@ class KGSHandler:
             raise Exception("Could not connect to the KGS server - either the server is down, or the connection information was not valid")
     
     def __del__(self):
-        print("deleting Handler")
+        print("Deleting KGSHandler")
         self.close()
 
     ##Private functions
@@ -85,14 +85,14 @@ class KGSHandler:
         sgfEvents = message["sgfEvents"]
         self.__commentsLock__.acquire()
         for e in sgfEvents:
-            if e["type"] == "PROP_ADDED":
+            if e["type"] == "PROP_ADDED" or e["type"] == "PROP_CHANGED":
                 p = e["prop"]
                 if p["name"] == "COMMENT":
                         lines = p["text"].split("\n")
                         for l in lines:
                             if len(l) == 0:
                                 continue
-                            user, text = l.split(":")
+                            user, text = l.split(":",1)
                             if '[' in user:
                                 user, rank = user.split(" ")
                             else :
@@ -112,7 +112,7 @@ class KGSHandler:
                         for l in lines:
                             if len(l) == 0:
                                 continue
-                            user, text = l.split(":")
+                            user, text = l.split(":",1)
                             if '[' in user:
                                 user, rank = user.split(" ")
                             else :
@@ -136,8 +136,9 @@ class KGSHandler:
                 self.__gameChannelHandler__(m)
             ##ROOM_JOIN & GAME_LIST handling
             if (m["type"] == "ROOM_JOIN" or m["type"] == "GAME_LIST") and "games" in m:
+                channelId = m["channelId"]
                 for g in m["games"]:
-                    if (g["gameType"] == "free" or  g["gameType"] == "ranked"):
+                    if (g["gameType"] == "free" or  g["gameType"] == "ranked") and not "private" in g:
                         black = g["players"]["black"]["name"]
                         white = g["players"]["white"]["name"]
                         id = g["channelId"]
@@ -148,6 +149,7 @@ class KGSHandler:
                             score = "UNFINISHED"
                         self.__gamesLock__.acquire()
                         self.__games__[id] = {
+                            "channelId" : channelId,
                             "id"       : id,
                             "black"    : black, 
                             "white"    : white, 
@@ -171,8 +173,8 @@ class KGSHandler:
                 self.__archiveLock__.acquire()
                 self.__archiveUser__ = m["user"]["name"]
                 for g in m["games"]:
-                    #We do not return reviews
-                    if (g["gameType"] == "free" or  g["gameType"] == "ranked"):
+                    #We do not return reviews or private games
+                    if (g["gameType"] == "free" or  g["gameType"] == "ranked") and not "private" in g:
                         black = g["players"]["black"]["name"]
                         white = g["players"]["white"]["name"]
                         score = g["score"]
@@ -190,6 +192,7 @@ class KGSHandler:
     def __startDaemons__(self):
         self.__threads__.append(threading.Thread(target=self.__communicationDaemon__, daemon=True))
         self.__threads__.append(threading.Thread(target=self.__messageHandler__, daemon=True))
+        self.__threads__.append(threading.Thread(target=self.__keepAlive__, daemon=True))
         for t  in self.__threads__:
             t.start()
 
@@ -202,9 +205,33 @@ class KGSHandler:
         if r.status_code != 200:
             raise Exception("Could not join Global Game List")
     
-    
+    def __keepAlive__(self):
+        while True:
+            message = {
+                "type": "WAKE_UP"
+            }
+            self.__outQueue__.put(message)
+
+            time.sleep(600)
     ##Public functions
+    def sendMessage(self, channel, message):
+        m = {
+            "type": "CHAT",
+            "channelId": channel,
+            "text" : message
+        }
+        self.__outQueue__.put(m)
+
     def getComments(self):
+        #Returns a list comments made since this function was last checked
+        #Returns a list of dicts
+        #Comment dict is of the form :
+        #{
+        # "channelId" : int channelId
+        # "user" : str username
+        # "rank" : str rank (eg "[2k]") (or "NORANK" for guests)
+        # "text" : str with the comment text
+        # }
         self.__commentsLock__.acquire()
         r = copy.deepcopy(self.__comments__)
         self.__comments__ = []
@@ -224,7 +251,7 @@ class KGSHandler:
         #returns an array of the games currently being played on the server
         #return format :
         #Array of dictionaries of the format 
-        # {"id":id, "black" : black, "white" : white, "moveNum" : moveNum, "score": score}
+        # {"channelId": channelId, "id":id, "black" : black, "white" : white, "moveNum" : moveNum, "score": score}
         #id is the id of the game
         #black & white are the name of the players
         #moveNum is the number of moves played if the game is currently underway
