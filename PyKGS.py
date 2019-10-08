@@ -26,6 +26,10 @@ class KGSHandler:
     __archiveUser__ = ""
     __archiveGames__ = []
     __archiveLock__ = threading.Lock()
+
+    __comments__ = []
+    __commentsLock__ = threading.Lock()
+
     ##Constructor
     def __init__(self, login, password,globalGameList):
         #Login to the server
@@ -75,13 +79,61 @@ class KGSHandler:
             if r.status_code != 200:
                 raise Exception("Received a bad response after trying to post a message")
                 
+    def __gameChannelHandler__(self, message):
+        #Puts all comments made during a game into the __comments__ list
+        channelId = message["channelId"]
+        sgfEvents = message["sgfEvents"]
+        self.__commentsLock__.acquire()
+        for e in sgfEvents:
+            if e["type"] == "PROP_ADDED":
+                p = e["prop"]
+                if p["name"] == "COMMENT":
+                        lines = p["text"].split("\n")
+                        for l in lines:
+                            if len(l) == 0:
+                                continue
+                            user, text = l.split(":")
+                            if '[' in user:
+                                user, rank = user.split(" ")
+                            else :
+                                rank = "NO_RANK"
+                            self.__comments__.append(
+                                {
+                                    "channelId" : channelId,
+                                    "user" : user,
+                                    "rank" : rank,
+                                    "text" : text[1:]
+                                }
+                            )
+            if e["type"] == "PROP_GROUP_ADDED":
+                for p in e["props"]:
+                    if p["name"] == "COMMENT":
+                        lines = p["text"].split("\n")
+                        for l in lines:
+                            if len(l) == 0:
+                                continue
+                            user, text = l.split(":")
+                            if '[' in user:
+                                user, rank = user.split(" ")
+                            else :
+                                rank = "NO_RANK"
+                            self.__comments__.append(
+                                {
+                                    "channelId" : channelId,
+                                    "user" : user,
+                                    "rank" : rank,
+                                    "text" : text[1:]
+                                }
+                            )
+        self.__commentsLock__.release()
 
     def __messageHandler__(self):
         #Processes the messages received by KGS
         #Currently only processes games
         while True:
             m = self.__inQueue__.get()
-
+            if (m["type"] == "GAME_JOIN") or (m["type"] == "GAME_UPDATE"):
+                self.__gameChannelHandler__(m)
             ##ROOM_JOIN & GAME_LIST handling
             if (m["type"] == "ROOM_JOIN" or m["type"] == "GAME_LIST") and "games" in m:
                 for g in m["games"]:
@@ -150,7 +202,24 @@ class KGSHandler:
         if r.status_code != 200:
             raise Exception("Could not join Global Game List")
     
+    
     ##Public functions
+    def getComments(self):
+        self.__commentsLock__.acquire()
+        r = copy.deepcopy(self.__comments__)
+        self.__comments__ = []
+        self.__commentsLock__.release()
+
+        return r
+
+    def joinChannel(self, channelId):
+        #joins a channel
+        message = {
+            "type": "JOIN_REQUEST",
+            "channelId": channelId
+        }
+        self.__outQueue__.put(message)
+
     def getGames (self):
         #returns an array of the games currently being played on the server
         #return format :
