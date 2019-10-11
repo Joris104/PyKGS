@@ -138,7 +138,7 @@ class KGSHandler:
             if (m["type"] == "ROOM_JOIN" or m["type"] == "GAME_LIST") and "games" in m:
                 channelId = m["channelId"]
                 for g in m["games"]:
-                    if (g["gameType"] == "free" or  g["gameType"] == "ranked") and not "private" in g:
+                    if (g["gameType"] == "free" or  g["gameType"] == "ranked" or g["gametype"] == "teaching") and not "private" in g:
                         black = g["players"]["black"]["name"]
                         white = g["players"]["white"]["name"]
                         id = g["channelId"]
@@ -168,13 +168,20 @@ class KGSHandler:
                 self.__gamesLock__.acquire()
                 self.__games__.pop(m["gameId"],None)
                 self.__gamesLock__.release()
+			## GAME_OVER Handler
+			if m["type"] == "GAME_OVER":
+				self.__gamesLock__.acquire()
+				gameId = m["channelId"]
+				score = m["score"]
+				self.__games__[gameId]["score"] = score
+				self.__gamesLock__.release()
             ## ARCHIVE_JOIN
             if m["type"] == "ARCHIVE_JOIN":
                 self.__archiveLock__.acquire()
                 self.__archiveUser__ = m["user"]["name"]
                 for g in m["games"]:
                     #We do not return reviews or private games
-                    if (g["gameType"] == "free" or  g["gameType"] == "ranked") and not "private" in g:
+                    if (g["gameType"] == "free" or  g["gameType"] == "ranked" or g["gametype"] == "teaching") and not "private" in g:
                         black = g["players"]["black"]["name"]
                         white = g["players"]["white"]["name"]
                         score = g["score"]
